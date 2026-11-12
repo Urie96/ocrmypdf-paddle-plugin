@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Test / demo artefacts
+result
+result-*
+/tmp/
+*.ocr.pdf
+
+# Editors
+.vscode/
+.idea/
+*.swp

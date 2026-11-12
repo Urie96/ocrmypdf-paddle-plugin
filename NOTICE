@@ -1,0 +1,42 @@
+This project is derived from ocrmypdf-paddleocr
+https://github.com/clefru/ocrmypdf-paddleocr
+Copyright the ocrmypdf-paddleocr authors, licensed under MPL-2.0.
+
+The file src/ocrmypdf_paddleocr/plugin.py is a modified copy of the original
+plugin. In accordance with the Mozilla Public License 2.0, the modified source
+is distributed under the same license (see LICENSE), and the modifications are
+listed below and marked with "fork:" / comments in the source.
+
+Modifications relative to upstream:
+
+  1. Added --paddle-inference-engine {auto,paddle,onnxruntime}
+     Lets the classic pipeline run on ONNX Runtime instead of paddle_static.
+     On CPU and PP-OCRv6 this is 5-10x faster, and it avoids the oneDNN crash
+     described below. "--paddle-inference-engine auto" (the default) prefers
+     onnxruntime when it is installed.
+
+  2. Added --paddle-no-mkldnn
+     Disables oneDNN/MKL-DNN. The paddle_static + oneDNN path raises
+         NotImplementedError: (Unimplemented) ConvertPirAttribute2RuntimeAttribute
+         not support [pir::ArrayAttribute<pir::DoubleAttribute>]
+         (at .../onednn_instruction.cc:116)
+     on some paddlepaddle builds (reproduced with the nixpkgs 3.3.0 CPU wheel).
+     Environment flags FLAGS_use_mkldnn=0 / FLAGS_enable_pir_api=0 do not help,
+     because paddlex enables oneDNN explicitly in its runner.
+
+  3. Added --paddle-det-limit-type and --paddle-det-limit-side-len
+     PaddleX ships limit_type=min / limit_side_len=64 for the OCR pipeline,
+     which effectively means "do not downscale": a 400 DPI page raster
+     (3306x4678) is fed to the detector unchanged. Defaults are now
+     max / 960, matching the values recommended by the PaddleOCR docs.
+
+  4. __init__.py no longer depends on setuptools_scm; the version is read from
+     package metadata.
+
+  5. packaging: pyproject.toml rewritten (no setuptools_scm, PEP 639 license,
+     optional extras), Nix expressions added under nix/.
+
+Everything else - the hOCR generation, word box merging, polygon handling and
+language mapping - is unchanged upstream code.
+
+Upstream itself credits OCRmyPDF and PaddleOCR; see README.md.
