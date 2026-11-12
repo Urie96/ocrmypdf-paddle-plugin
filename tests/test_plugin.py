@@ -11,6 +11,7 @@ import pytest
 
 from ocrmypdf_paddleocr import __version__
 from ocrmypdf_paddleocr.plugin import (
+    _MODEL_CACHE_SIZE,
     PaddleOCREngine,
     _resolve_inference_engine,
     add_options,
@@ -82,3 +83,34 @@ def test_resolve_inference_engine_auto_picks_available_backend():
     resolved = _resolve_inference_engine(opts)
     # onnxruntime if importable, otherwise paddle_static - never None for "auto"
     assert resolved in {"onnxruntime", "paddle_static"}
+
+
+def test_cache_key_is_hashable_and_stable():
+    opts = make_parser_options(["--paddle-inference-engine", "paddle"])
+    first = PaddleOCREngine._paddle_cache_key(opts)
+    second = PaddleOCREngine._paddle_cache_key(opts)
+    assert first == second
+    assert hash(first)  # must be usable as an lru_cache key
+
+
+def test_cache_key_distinguishes_configurations():
+    keys = {
+        PaddleOCREngine._paddle_cache_key(make_parser_options()),
+        PaddleOCREngine._paddle_cache_key(
+            make_parser_options(["--paddle-det-limit-side-len", "640"])
+        ),
+        PaddleOCREngine._paddle_cache_key(make_parser_options(["--paddle-no-mkldnn"])),
+        PaddleOCREngine._paddle_cache_key(
+            make_parser_options(["--paddle-inference-engine", "paddle"])
+        ),
+        PaddleOCREngine._paddle_cache_key(make_parser_options(["--paddle-use-gpu"])),
+    }
+    assert len(keys) == 5
+
+
+def test_model_cache_is_bounded_and_clearable():
+    info = PaddleOCREngine._build_paddle_ocr.cache_info()
+    assert info.maxsize == _MODEL_CACHE_SIZE
+    PaddleOCREngine._build_paddle_ocr.cache_clear()
+    assert PaddleOCREngine._build_paddle_ocr.cache_info().currsize == 0
+    assert PaddleOCREngine._build_paddle_vl.cache_info().maxsize == _MODEL_CACHE_SIZE

@@ -33,7 +33,14 @@ Modifications relative to upstream:
   4. __init__.py no longer depends on setuptools_scm; the version is read from
      package metadata.
 
-  5. packaging: pyproject.toml rewritten (no setuptools_scm, PEP 639 license,
+  5. Model instances are cached per process
+     Upstream called PaddleOCR(...) / PaddleOCRVL(...) once per page inside
+     generate_hocr(), so every page paid the model load again (~1.8 s for
+     PP-OCRv6 medium). _get_paddle_ocr()/_get_paddle_vl() now delegate to
+     lru_cache'd builders keyed on the settings that actually change what gets
+     loaded; each worker process therefore loads the models once.
+
+  6. packaging: pyproject.toml rewritten (no setuptools_scm, PEP 639 license,
      optional extras), Nix expressions added under nix/.
 
 Everything else - the hOCR generation, word box merging, polygon handling and

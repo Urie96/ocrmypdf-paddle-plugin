@@ -136,6 +136,17 @@ Detection size matters as much as the backend, because PaddleX ships
 | `min`/`64` (PaddleX default), onnxruntime | 3 min 51 s |
 | `max`/`960`, onnxruntime | **21.9 s** |
 
+### Model caching
+
+Pipelines are cached per process (`functools.lru_cache`, keyed on language,
+inference backend, detection size, device and model directories; at most
+`_MODEL_CACHE_SIZE = 2` instances). Without this, OCRmyPDF asks the plugin to
+build a pipeline for **every page**, paying the model load each time — ~1.8 s
+for PP-OCRv6 medium on CPU.
+
+Because each page is normally handled by a worker process, the models are loaded
+once per worker, not once per page. With `-j 1` that is once per document.
+
 ### File size
 
 OCRmyPDF does not re-rasterise pages that already contain images — it keeps them

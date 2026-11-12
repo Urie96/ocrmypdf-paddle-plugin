@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image
@@ -21,6 +22,12 @@ except ImportError:
     PaddleOCRVL = None
 
 log = logging.getLogger(__name__)
+
+# Number of distinct PaddleOCR/PaddleOCRVL instances kept alive per process.
+# Upstream rebuilt the pipeline on every page, paying the model load (~1.8 s for
+# PP-OCRv6 medium) once per page. One entry per distinct configuration is enough;
+# keep the bound small because each instance holds its own weights (~150 MB).
+_MODEL_CACHE_SIZE = 2
 
 
 @hookimpl
@@ -314,7 +321,12 @@ class PaddleOCREngine(OcrEngine):
 
     @staticmethod
     def _get_paddle_ocr(options):
-        """Create and configure PaddleOCR instance."""
+        """Return the PaddleOCR pipeline for this configuration.
+
+        The pipeline is cached per process (see _build_paddle_ocr) because
+        generate_hocr() is called once per page: without the cache every page
+        re-loads the models.
+        """
         # OCRmyPDF's Tesseract plugin sets OMP_THREAD_LIMIT to limit Tesseract threading.
         # This affects all plugins in the process. PaddleOCR needs more threads to work properly.
         # Temporarily unset it before initializing PaddleOCR.
@@ -324,8 +336,52 @@ class PaddleOCREngine(OcrEngine):
             log.warning(f"Removing OMP_THREAD_LIMIT={saved_omp_limit} set by Tesseract plugin")
             del os.environ['OMP_THREAD_LIMIT']
 
-        paddle_lang = PaddleOCREngine._get_paddle_lang(options)
-        log.debug(f"Initializing PaddleOCR with language: {paddle_lang}")
+        key = PaddleOCREngine._paddle_cache_key(options)
+        cache_info_before = PaddleOCREngine._build_paddle_ocr.cache_info()
+        engine = PaddleOCREngine._build_paddle_ocr(key)
+        cache_info_after = PaddleOCREngine._build_paddle_ocr.cache_info()
+        reused = cache_info_after.hits > cache_info_before.hits
+        log.debug(
+            "%s PaddleOCR instance for lang=%s engine=%s det_limit=%s/%s",
+            "Reusing cached" if reused else "Created",
+            key[0], key[1], key[3], key[4],
+        )
+        return engine
+
+    @staticmethod
+    def _paddle_cache_key(options):
+        """Hashable identity of a PaddleOCR configuration.
+
+        argparse.Namespace is not hashable, and almost every field is irrelevant
+        to the pipeline, so only the ones that change what gets loaded are kept.
+        """
+        return (
+            PaddleOCREngine._get_paddle_lang(options),
+            _resolve_inference_engine(options),
+            bool(getattr(options, 'paddle_use_gpu', False)),
+            getattr(options, 'paddle_det_limit_type', 'max'),
+            getattr(options, 'paddle_det_limit_side_len', 960),
+            bool(getattr(options, 'paddle_enable_mkldnn', True)),
+            getattr(options, 'paddle_det_model_dir', None),
+            getattr(options, 'paddle_rec_model_dir', None),
+            getattr(options, 'paddle_cls_model_dir', None),
+        )
+
+    @staticmethod
+    @lru_cache(maxsize=_MODEL_CACHE_SIZE)
+    def _build_paddle_ocr(key):
+        """Actually construct PaddleOCR. Cached - see _get_paddle_ocr."""
+        (
+            paddle_lang,
+            inference_engine,
+            use_gpu,
+            det_limit_type,
+            det_limit_side_len,
+            enable_mkldnn,
+            det_model_dir,
+            rec_model_dir,
+            cls_model_dir,
+        ) = key
 
         kwargs = {
             # Disable textline orientation - not needed for most documents
@@ -338,47 +394,48 @@ class PaddleOCREngine(OcrEngine):
             # Detection input size. PaddleX ships limit_type=min / limit_side_len=64,
             # which means "do not downscale": a 300+ DPI raster (3300x4700) is fed
             # to the detector as-is and a single page can take ~2 minutes.
-            'text_det_limit_type': getattr(options, 'paddle_det_limit_type', 'max'),
-            'text_det_limit_side_len': getattr(options, 'paddle_det_limit_side_len', 960),
+            'text_det_limit_type': det_limit_type,
+            'text_det_limit_side_len': det_limit_side_len,
         }
 
-        inference_engine = _resolve_inference_engine(options)
         if inference_engine:
             kwargs['engine'] = inference_engine
-            log.debug(f"PaddleOCR inference engine: {inference_engine}")
 
         # oneDNN/MKL-DNN. The paddle_static + oneDNN path crashes on some builds
         # (nixpkgs paddlepaddle CPU wheel: ConvertPirAttribute2RuntimeAttribute
         # not support, onednn_instruction.cc:116). --paddle-no-mkldnn avoids it,
         # but disabling oneDNN makes paddle_static several times slower - prefer
         # --paddle-inference-engine onnxruntime in that case.
-        if not getattr(options, 'paddle_enable_mkldnn', True):
+        if not enable_mkldnn:
             kwargs['enable_mkldnn'] = False
 
         # Set device for GPU/CPU
-        if getattr(options, 'paddle_use_gpu', False):
-            kwargs['device'] = 'gpu'
-        else:
-            kwargs['device'] = 'cpu'
+        kwargs['device'] = 'gpu' if use_gpu else 'cpu'
 
         # Add model directories if specified
-        if hasattr(options, 'paddle_det_model_dir') and options.paddle_det_model_dir:
-            kwargs['text_detection_model_dir'] = options.paddle_det_model_dir
-        if hasattr(options, 'paddle_rec_model_dir') and options.paddle_rec_model_dir:
-            kwargs['text_recognition_model_dir'] = options.paddle_rec_model_dir
-        if hasattr(options, 'paddle_cls_model_dir') and options.paddle_cls_model_dir:
-            kwargs['textline_orientation_model_dir'] = options.paddle_cls_model_dir
+        if det_model_dir:
+            kwargs['text_detection_model_dir'] = det_model_dir
+        if rec_model_dir:
+            kwargs['text_recognition_model_dir'] = rec_model_dir
+        if cls_model_dir:
+            kwargs['textline_orientation_model_dir'] = cls_model_dir
 
         log.debug(f"Creating PaddleOCR with kwargs: {kwargs}")
         return PaddleOCR(**kwargs)
 
     @staticmethod
     def _get_paddle_vl(options):
-        """Create and configure PaddleOCRVL instance.
+        """Return the (cached) PaddleOCR-VL pipeline for this configuration.
 
         Supports both paddleocr 3.3.x (PaddleOCR-VL v1) and newer versions
         that expose pipeline_version='v1.5' with native spotting mode.
         """
+        return PaddleOCREngine._build_paddle_vl(bool(getattr(options, 'paddle_use_gpu', False)))
+
+    @staticmethod
+    @lru_cache(maxsize=_MODEL_CACHE_SIZE)
+    def _build_paddle_vl(use_gpu):
+        """Construct PaddleOCRVL. Cached - see _get_paddle_vl."""
         import inspect
         sig = inspect.signature(PaddleOCRVL.__init__)
 
@@ -397,10 +454,7 @@ class PaddleOCREngine(OcrEngine):
         else:
             log.debug("PaddleOCRVL: pipeline_version not available, using v1 (ocr mode)")
 
-        if getattr(options, 'paddle_use_gpu', False):
-            kwargs['device'] = 'gpu'
-        else:
-            kwargs['device'] = 'cpu'
+        kwargs['device'] = 'gpu' if use_gpu else 'cpu'
 
         log.debug(f"Creating PaddleOCRVL with kwargs: {kwargs}")
         return PaddleOCRVL(**kwargs)
