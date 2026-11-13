@@ -201,11 +201,12 @@ def _cache_key(options):
 def _get_rapid_ocr(options):
     """Return the cached RapidOCR pipeline for this configuration."""
     # OCRmyPDF's Tesseract plugin sets OMP_THREAD_LIMIT to limit Tesseract
-    # threading.  That leaks into every plugin in the process; onnxruntime
-    # would inherit it, so unset it before building the session.
+    # threading.  That leaks into every plugin in the process (paperless sets it
+    # on every parse() call), so drop it before building the onnxruntime session:
+    # with an OpenMP-enabled onnxruntime it would clamp inference to one thread.
     saved_omp_limit = os.environ.pop('OMP_THREAD_LIMIT', None)
     if saved_omp_limit:
-        log.warning("Removing OMP_THREAD_LIMIT=%s set by the Tesseract plugin", saved_omp_limit)
+        log.debug("Unset OMP_THREAD_LIMIT=%s set by the Tesseract plugin", saved_omp_limit)
 
     key = _cache_key(options)
     hits_before = _build_rapid_ocr.cache_info().hits
