@@ -1,13 +1,13 @@
 # Ready-to-use shell:  nix-shell nix/shell.nix
 #
-#   ocrmypdf --plugin ocrmypdf_paddleocr -l chi_sim in.pdf out.pdf
+#   ocrmypdf --plugin rapidocr -l chi_sim in.pdf out.pdf
 #
 # Bundles the plugin plus everything OCRmyPDF needs from the outside world
 # (ghostscript / qpdf / pngquant) and a CJK font so the invisible text layer can
 # pick a font that actually has the glyphs.
 {
   pkgs,
-  pythonPkg ? pkgs.python313,
+  pythonPkg ? pkgs.python3,
 }:
 let
   plugin = pkgs.callPackage ./default.nix { pythonPkg = pythonPkg; };
@@ -24,9 +24,7 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
-    export PADDLE_PDX_MODEL_SOURCE="''${PADDLE_PDX_MODEL_SOURCE:-HuggingFace}"
-    export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
     echo "ocrmypdf: $(command -v ocrmypdf) ($(ocrmypdf --version 2>/dev/null | head -1))"
-    echo "models:   ''${HOME}/.paddlex/official_models"
+    echo "models:   $(python -c 'import pathlib, rapidocr; print(pathlib.Path(rapidocr.__file__).parent / "models")')"
   '';
 }

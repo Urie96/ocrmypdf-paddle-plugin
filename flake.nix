@@ -1,5 +1,5 @@
 {
-  description = "PaddleOCR (PP-OCRv6 / PaddleOCR-VL) engine plugin for OCRmyPDF";
+  description = "RapidOCR (PP-OCRv6) engine plugin for OCRmyPDF";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -24,7 +24,7 @@
       });
 
       overlays.default = final: prev: {
-        ocrmypdf-paddleocr = final.callPackage ./nix/default.nix { };
+        ocrmypdf-rapidocr = final.callPackage ./nix/default.nix { };
       };
     };
 }

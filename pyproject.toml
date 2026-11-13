@@ -3,15 +3,15 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ocrmypdf-paddleocr"
-version = "0.2.0"
-description = "PaddleOCR (PP-OCRv6 / PaddleOCR-VL) engine plugin for OCRmyPDF"
+name = "ocrmypdf-rapidocr"
+version = "0.3.0"
+description = "RapidOCR (PP-OCRv6) engine plugin for OCRmyPDF"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MPL-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "ocrmypdf-paddleocr contributors" }]
-keywords = ["ocr", "ocrmypdf", "paddleocr", "pdf", "pp-ocrv6"]
+authors = [{ name = "ocrmypdf-rapidocr contributors" }]
+keywords = ["ocr", "ocrmypdf", "rapidocr", "pp-ocrv6", "pdf"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -22,25 +22,27 @@ classifiers = [
 ]
 dependencies = [
     "ocrmypdf>=14.0.0",
-    "paddleocr>=2.7.0",
-    "paddlepaddle>=2.5.0",
+    "rapidocr>=3.0.0",
     "pillow>=9.0.0",
 ]
 
 [project.optional-dependencies]
-# Recommended on CPU: 5-10x faster than paddle_static for PP-OCRv6.
+# Needed for the actual inference: rapidocr can drive several backends, but
+# onnxruntime is the only one that does not drag in paddlepaddle/torch.
 onnxruntime = ["onnxruntime>=1.16"]
-# Needed only for --paddle-engine vl.
-vl = ["paddleocr[doc-parser]>=3.3"]
 
 [project.urls]
-# TODO: 改成你自己的仓库地址
-Homepage = "https://github.com/USERNAME/ocrmypdf-paddle-plugin"
-Issues = "https://github.com/USERNAME/ocrmypdf-paddle-plugin/issues"
+Homepage = "https://github.com/Urie96/ocrmypdf-paddle-plugin"
+Issues = "https://github.com/Urie96/ocrmypdf-paddle-plugin/issues"
 Source = "https://github.com/clefru/ocrmypdf-paddleocr"
 
+# The entry point name must NOT be an importable module name: `--plugin NAME`
+# does importlib.import_module(NAME) and pluggy refuses to register two plugins
+# under the same name, so a name like "rapidocr" (which is also the library
+# module) would make `ocrmypdf --plugin rapidocr` abort.  The plugin is loaded
+# automatically through this entry point anyway; --plugin is not needed.
 [project.entry-points.ocrmypdf]
-paddleocr = "ocrmypdf_paddleocr.plugin"
+ocrmypdf_rapidocr_plugin = "ocrmypdf_rapidocr.plugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]

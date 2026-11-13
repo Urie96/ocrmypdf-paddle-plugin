@@ -2,48 +2,66 @@ This project is derived from ocrmypdf-paddleocr
 https://github.com/clefru/ocrmypdf-paddleocr
 Copyright the ocrmypdf-paddleocr authors, licensed under MPL-2.0.
 
-The file src/ocrmypdf_paddleocr/plugin.py is a modified copy of the original
-plugin. In accordance with the Mozilla Public License 2.0, the modified source
-is distributed under the same license (see LICENSE), and the modifications are
-listed below and marked with "fork:" / comments in the source.
+The file src/ocrmypdf_rapidocr/plugin.py (formerly src/ocrmypdf_paddleocr/plugin.py)
+is a modified copy of the original plugin. In accordance with the Mozilla Public
+License 2.0, the modified source is distributed under the same license (see
+LICENSE), and the modifications are listed below.
 
-Modifications relative to upstream:
+Modifications relative to upstream clefru/ocrmypdf-paddleocr:
 
-  1. Added --paddle-inference-engine {auto,paddle,onnxruntime}
-     Lets the classic pipeline run on ONNX Runtime instead of paddle_static.
-     On CPU and PP-OCRv6 this is 5-10x faster, and it avoids the oneDNN crash
-     described below. "--paddle-inference-engine auto" (the default) prefers
-     onnxruntime when it is installed.
+  1. OCR engine replaced: PaddleOCR -> RapidOCR (PP-OCRv6)
+     The engine is now rapidocr.RapidOCR driven by ONNX Runtime instead of
+     paddleocr/paddlex/paddlepaddle. On CPU the two paths run the same onnx
+     models, so accuracy is unchanged, but the dependency chain shrinks from
+     paddlepaddle+paddlex+modelscope (with insecure and unfree packages on
+     nixpkgs) to rapidocr+onnxruntime.
 
-  2. Added --paddle-no-mkldnn
-     Disables oneDNN/MKL-DNN. The paddle_static + oneDNN path raises
-         NotImplementedError: (Unimplemented) ConvertPirAttribute2RuntimeAttribute
-         not support [pir::ArrayAttribute<pir::DoubleAttribute>]
-         (at .../onednn_instruction.cc:116)
-     on some paddlepaddle builds (reproduced with the nixpkgs 3.3.0 CPU wheel).
-     Environment flags FLAGS_use_mkldnn=0 / FLAGS_enable_pir_api=0 do not help,
-     because paddlex enables oneDNN explicitly in its runner.
+  2. PaddleOCR-VL support removed
+     --paddle-engine vl, the PaddleOCRVL pipeline and its block/spotting hOCR
+     path are gone; only the classic PP-OCRv6 det+rec+cls pipeline remains.
 
-  3. Added --paddle-det-limit-type and --paddle-det-limit-side-len
-     PaddleX ships limit_type=min / limit_side_len=64 for the OCR pipeline,
-     which effectively means "do not downscale": a 400 DPI page raster
-     (3306x4678) is fed to the detector unchanged. Defaults are now
-     max / 960, matching the values recommended by the PaddleOCR docs.
+  3. Language set reduced to Chinese (simplified) and English
+     LANGUAGE_MAP is chi_sim -> ch, eng -> en. Unsupported codes warn and fall
+     back to ch. (PP-OCRv6 det/rec is one multilingual model, so both entries
+     load identical weights.)
 
-  4. __init__.py no longer depends on setuptools_scm; the version is read from
-     package metadata.
+  4. Word-box handling simplified
+     Upstream fetched text_word/text_word_region from PaddleOCR and re-merged
+     sub-tokens and unioned their boxes. RapidOCR's return_word_box=True already
+     yields (word, score, quad) per line in original-image coordinates, so the
+     token merging, the doc_preprocessor_res-based scale_x/scale_y correction
+     and the line regrouping helper are all removed. A proportional fallback is
+     kept for lines without native word boxes.
 
-  5. Model instances are cached per process
-     Upstream called PaddleOCR(...) / PaddleOCRVL(...) once per page inside
-     generate_hocr(), so every page paid the model load again (~1.8 s for
-     PP-OCRv6 medium). _get_paddle_ocr()/_get_paddle_vl() now delegate to
-     lru_cache'd builders keyed on the settings that actually change what gets
-     loaded; each worker process therefore loads the models once.
+  5. hOCR generation split into a pure function
+     _hocr_document(result, width, height, hocr_lang, creator_tag) does no I/O and
+     takes no RapidOCR types, so the hOCR writer is unit tested without models.
 
-  6. packaging: pyproject.toml rewritten (no setuptools_scm, PEP 639 license,
-     optional extras), Nix expressions added under nix/.
+  6. Options renamed and pruned
+     --paddle-engine / --paddle-inference-engine / --paddle-no-mkldnn are gone
+     (onnxruntime is the backend, oneDNN does not exist here).
+     --paddle-det-limit-{type,side-len} -> --rapid-det-limit-{type,side-len},
+     --paddle-{det,rec,cls}-model-dir -> --rapid-{det,rec,cls}-model-path
+     (RapidOCR takes model files, not directories), --paddle-use-gpu ->
+     --rapid-use-gpu, --paddle-show-log -> --rapid-show-log, plus the new
+     --rapid-model-type {tiny,small,medium}.
 
-Everything else - the hOCR generation, word box merging, polygon handling and
-language mapping - is unchanged upstream code.
+  7. Model instances are cached per process
+     Upstream built the pipeline inside generate_hocr(), i.e. once per page.
+     _get_rapid_ocr() delegates to an lru_cache'd builder keyed on the settings
+     that change what gets loaded, so each worker loads the model once.
 
-Upstream itself credits OCRmyPDF and PaddleOCR; see README.md.
+  8. __init__.py no longer depends on setuptools_scm; the version is read from
+     package metadata. The distribution is now ocrmypdf-rapidocr (module
+     ocrmypdf_rapidocr, entry point ocrmypdf_rapidocr_plugin) and
+     pyproject.toml/Nix expressions were rewritten for the RapidOCR dependency
+     set.
+
+Everything else - the OCRmyPDF plugin API surface, the hOCR document structure
+(ocr_page / ocr_carea / ocr_par / ocr_line / ocrx_word), polygon-to-bbox
+averaging and the hOCR -> PDF path through HocrTransform - is unchanged upstream
+code.
+
+Upstream itself credits OCRmyPDF and PaddleOCR; the engine is now RapidOCR
+(https://github.com/RapidAI/RapidOCR, Apache-2.0) which in turn derives from
+PaddleOCR's PP-OCR models.
